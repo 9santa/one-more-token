@@ -14,10 +14,6 @@ $$x_{1:t} → model → logits_{s_t} → sampler → x_{t+1}$$
 single request
   -> multiple request states
 
-naive full-context decoding
-  - prefill once
-  - decode one token at a time using KV cache
-
 ### What changed
 Before:
 for step in maxNewTokens:
@@ -28,3 +24,14 @@ while there are active requests:
     for each active request:
         generate one token
         maybe finish it
+
+
+# Stage 3
+batched decode
+we want:
+Batch batch = build from active sequences
+allLogits = model.forwardNextTokenBatch(batch.contexts)
+
+for each row in batch:
+    sample token
+    update corresponding sequence

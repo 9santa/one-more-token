@@ -58,6 +58,19 @@ public:
 
         return logits;
     }
+
+    std::vector<std::vector<float>> forwardNextTokenBatch(
+        const std::vector<std::vector<TokenId>>& batchContexts
+    ) override {
+        std::vector<std::vector<float>> batchLogits;
+        batchLogits.reserve(batchContexts.size());
+
+        for (const auto& context : batchContexts) {
+            batchLogits.push_back(forwardNextToken(context));
+        }
+
+        return batchLogits;
+    }
 };
 
 

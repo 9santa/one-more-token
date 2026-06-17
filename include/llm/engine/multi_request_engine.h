@@ -8,6 +8,7 @@
 #include "llm/model/model_backend.h"
 #include "llm/sampling/sampler.h"
 #include "llm/tokenizer/simple_tokenizer.h"
+#include "llm/engine/decode_batch.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -68,6 +69,26 @@ private:
         activeIds_ = std::move(stillActive);
     }
 
+    DecodeBatch buildDecodeBatch() const {
+        DecodeBatch batch;
+
+        batch.requestIds.reserve(activeIds_.size());
+        batch.contexts.reserve(activeIds_.size());
+
+        for (RequstId id : activeIds_) {
+            const Sequence& seq = getSequenceOrThrow(id);
+
+            if (!seq.isRunning()) continue;
+
+            batch.requestIds.push_back(id);
+            batch.contexts.push_back(seq.contextTokens());
+        }
+
+        batch.validate();
+        return batch;
+    }
+
+
 public:
     MultiRequstEngine(ModelBackend& model,
                       SimpleTokenizer& tokenizer)
@@ -124,18 +145,27 @@ public:
             return events;
         }
 
-        std::vector<RequstId> idsThisStep = activeIds_;
+        DecodeBatch batch = buildDecodeBatch();
 
-        for (RequstId id : idsThisStep) {
+        if (batch.empty()) {
+            removeInactiveFromActiveList();
+            return events;
+        }
+
+        std::vector<std::vector<float>> batchLogits =
+            model_.forwardNextTokenBatch(batch.contexts);
+
+        if (batchLogits.size() != batch.size()) {
+            throw std::runtime_error("Model returned wrong number of batch rows");
+        }
+
+        for (size_t row = 0; row < batch.size(); row++) {
+            RequstId id = batch.requestIds[row];
             Sequence& seq = getSequenceOrThrow(id);
 
-            if (!seq.isRunning()) {
-                continue;
-            }
+            if (!seq.isRunning()) continue;
 
-            std::vector<TokenId> context = seq.contextTokens();
-
-            std::vector<float> logits = model_.forwardNextToken(context);
+            const std::vector<float>& logits = batchLogits[row];
 
             if (logits.size() != model_.vocabSize()) {
                 throw std::runtime_error("Model returned logits with wrong vocab size");
