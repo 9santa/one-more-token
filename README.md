@@ -1,10 +1,10 @@
 # Stage 1
 prompt string
-  -> tokenize
-  -> mock model produces logits
-  -> sampler picks next token
-  -> append token
-  -> repeat until EOS or max_new_tokens
+  - tokenize
+  - mock model produces logits
+  - sampler picks next token
+  - append token
+  - repeat until EOS or max_new_tokens
 
 ### Naive autoregressive loop:
 $$x_{1:t} → model → logits_{s_t} → sampler → x_{t+1}$$
@@ -15,5 +15,16 @@ single request
   -> multiple request states
 
 naive full-context decoding
-  -> prefill once
-  -> decode one token at a time using KV cache
+  - prefill once
+  - decode one token at a time using KV cache
+
+### What changed
+Before:
+for step in maxNewTokens:
+    generate one token for one request
+
+Now:
+while there are active requests:
+    for each active request:
+        generate one token
+        maybe finish it
