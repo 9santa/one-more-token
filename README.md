@@ -9,3 +9,11 @@ prompt string
 ### Naive autoregressive loop:
 $$x_{1:t} → model → logits_{s_t} → sampler → x_{t+1}$$
 
+
+# Stage 2
+single request
+  -> multiple request states
+
+naive full-context decoding
+  -> prefill once
+  -> decode one token at a time using KV cache
