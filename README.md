@@ -35,3 +35,7 @@ allLogits = model.forwardNextTokenBatch(batch.contexts)
 for each row in batch:
     sample token
     update corresponding sequence
+
+
+# Stage 4
+scheduler + v1 continuous/in-flight batching

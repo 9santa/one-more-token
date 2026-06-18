@@ -21,3 +21,9 @@ add_executable(run_multi_request
     examples/run_multi_request.cpp
 )
 target_link_libraries(run_multi_request PRIVATE one_more_token)
+
+
+add_executable(run_scheduled_engine
+    examples/run_scheduled_engine.cpp
+)
+target_link_libraries(run_scheduled_engine PRIVATE one_more_token)

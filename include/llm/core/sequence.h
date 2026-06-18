@@ -12,6 +12,7 @@ namespace llm {
 using RequstId = uint64_t;
 
 enum class SequenceStatus {
+    Waiting,
     Running,
     Finished,
     Cancelled
@@ -45,8 +46,17 @@ struct Sequence {
         return static_cast<int>(promptsTokens.size() + generatedTokens.size());
     }
 
+    bool isWaiting() const {
+        return status == SequenceStatus::Waiting;
+    }
+
     bool isRunning() const {
         return status == SequenceStatus::Running;
+    }
+
+    bool isFinished() const {
+        return status == SequenceStatus::Finished ||
+               status == SequenceStatus::Cancelled;
     }
 
     // Right contextTokens() copies, which is bad. Will change this later.
