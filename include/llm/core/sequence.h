@@ -2,6 +2,7 @@
 
 #include "llm/core/token.h"
 #include "llm/core/generation_config.h"
+#include "llm/kv/kv_cache.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -29,6 +30,8 @@ enum class FinishReason {
 
 struct Sequence {
     RequstId id = 0;
+
+    KVCacheHandle kvCache;
 
     std::string prompt;
 

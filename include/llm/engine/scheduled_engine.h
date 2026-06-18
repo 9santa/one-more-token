@@ -9,6 +9,7 @@
 #include "llm/engine/batch.h"
 #include "llm/engine/scheduler.h"
 
+#include "llm/kv/kv_cache.h"
 #include "llm/model/model_backend.h"
 #include "llm/sampling/sampler.h"
 #include "llm/tokenizer/simple_tokenizer.h"
@@ -26,6 +27,7 @@ private:
     SimpleTokenizer& tokenizer_;
     Sampler sampler_;
     Scheduler scheduler_;
+    KVCacheManager kvCacheManager_;
 
     RequstId nextRequestId_ = 1;
 
@@ -60,6 +62,15 @@ private:
             if (!seq.isWaiting()) {
                 throw std::runtime_error("Scheduler admitted non-waiting sequence");
             }
+
+            if (seq.kvCache.valid()) {
+                throw std::runtime_error("Sequence already had KV cache before prefill");
+            }
+
+            seq.kvCache = kvCacheManager_.allocate(
+                seq.id,
+                static_cast<int>(seq.promptsTokens.size())
+            );
 
             seq.status = SequenceStatus::Prefill;
         }
@@ -117,6 +128,10 @@ private:
 
         Sequence& seq = getSequenceOrThrow(id);
 
+        if (!seq.kvCache.valid()) {
+            throw std::runtime_error("Sequence has no KV cache");
+        }
+
         TokenId nextToken = sampler_.sample(logits, seq.config);
 
         TokenEvent event;
@@ -130,6 +145,9 @@ private:
             seq.status = SequenceStatus::Finished;
             seq.finishReason = FinishReason::EosToken;
 
+            kvCacheManager_.free(seq.kvCache);
+            seq.kvCache = KVCacheHandle{};
+
             event.finished = true;
             event.finishReason = FinishReason::EosToken;
 
@@ -139,12 +157,18 @@ private:
 
         seq.generatedTokens.push_back(nextToken);
 
+        // Generated one real token, so the KV cache sequence length grows by 1
+        kvCacheManager_.appendToken(seq.kvCache);
+
         event.hasToken = true;
         event.text = tokenizer_.decode(std::vector<TokenId>{nextToken});
 
         if (seq.generatedLength() >= seq.config.maxNewTokens) {
             seq.status = SequenceStatus::Finished;
             seq.finishReason = FinishReason::MaxNewTokens;
+
+            kvCacheManager_.free(seq.kvCache);
+            seq.kvCache = KVCacheHandle{};
 
             event.finished = true;
             event.finishReason = FinishReason::MaxNewTokens;
@@ -266,6 +290,11 @@ public:
             return;
         }
 
+        if (seq.kvCache.valid()) {
+            kvCacheManager_.free(seq.kvCache);
+            seq.kvCache = KVCacheHandle{};
+        }
+
         seq.status = SequenceStatus::Cancelled;
         seq.finishReason = FinishReason::Cancelled;
 
@@ -290,6 +319,10 @@ public:
 
     size_t decodeCount() const {
         return countStatus(SequenceStatus::Decode);
+    }
+
+    size_t activeKVCacheCount() const {
+        return kvCacheManager_.activeEntries();
     }
 
     std::vector<TokenEvent> step() {
