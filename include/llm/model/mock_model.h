@@ -1,5 +1,6 @@
 #pragma once
 
+#include "llm/core/token.h"
 #include "llm/model/model_backend.h"
 
 #include <stdexcept>
@@ -14,6 +15,27 @@ private:
     size_t vocabSize_;
     TokenId eosTokenId_;
 
+    std::vector<float> makeLogits(TokenId lastToken,
+                                  int currentLength) const {
+        std::vector<float> logits(vocabSize_, -10.0f);
+
+        TokenId next = lastToken + 1;
+
+        if (next >= static_cast<TokenId>(vocabSize_)) {
+            next = 3;
+        }
+
+        if (next < 3) next = 3;
+
+        // Stop after sequence becomes too long
+        // currentLength means: number of tokens already in the sequence
+        // before producing the next one
+        if (currentLength >= 12) next = eosTokenId_;
+
+        logits[next] = 10.0f;
+        return logits;
+    }
+
 public:
     MockModel(size_t vocabSize, TokenId eosTokenId)
         : vocabSize_(vocabSize),
@@ -27,46 +49,41 @@ public:
         return vocabSize_;
     }
 
-    std::vector<float> forwardNextToken(
-        const std::vector<TokenId>& contextTokens
-    ) override {
-        if (contextTokens.empty()) {
-            throw std::runtime_error("MockModel requires non-empty context");
-        }
-
-        std::vector<float> logits(vocabSize_, -10.0f);
-
-        TokenId last = contextTokens.back();
-
-        TokenId next = last + 1;
-
-        if (next >= static_cast<TokenId>(vocabSize_)) {
-            next = 3;
-        }
-
-        // Avoid generating special tokens too early.
-        if (next < 3) {
-            next = 3;
-        }
-
-        // End after the context becomes long enough.
-        if (contextTokens.size() >= 12) {
-            next = eosTokenId_;
-        }
-
-        logits[next] = 10.0f;
-
-        return logits;
-    }
-
-    std::vector<std::vector<float>> forwardNextTokenBatch(
-        const std::vector<std::vector<TokenId>>& batchContexts
+    // prefill: sees full prompt
+    std::vector<std::vector<float>> prefillBatch(
+        const std::vector<std::vector<TokenId>>& batchPromptTokens
     ) override {
         std::vector<std::vector<float>> batchLogits;
-        batchLogits.reserve(batchContexts.size());
+        batchLogits.reserve(batchPromptTokens.size());
 
-        for (const auto& context : batchContexts) {
-            batchLogits.push_back(forwardNextToken(context));
+        for (const auto& prompt : batchPromptTokens) {
+            if (prompt.empty()) {
+                throw std::runtime_error("MockModel prefill received empty prompt");
+            }
+
+            TokenId last = prompt.back();
+            int currentLength = static_cast<int>(prompt.size());
+
+            batchLogits.push_back(makeLogits(last, currentLength));
+        }
+
+        return batchLogits;
+    }
+
+    // decode: sees only last token + position
+    std::vector<std::vector<float>> decodeBatch(
+        const std::vector<TokenId>& lastTokens,
+        const std::vector<int>& positions
+    ) override {
+        if (lastTokens.size() != positions.size()) {
+            throw std::runtime_error("MockModel decode size mismatch");
+        }
+
+        std::vector<std::vector<float>> batchLogits;
+        batchLogits.reserve(lastTokens.size());
+
+        for (size_t i = 0; i < lastTokens.size(); i++) {
+            batchLogits.push_back(makeLogits(lastTokens[i], positions[i]));
         }
 
         return batchLogits;

@@ -2,7 +2,6 @@
 
 #include "llm/core/token.h"
 
-#include <stdexcept>
 #include <vector>
 
 namespace llm {
@@ -13,27 +12,16 @@ public:
 
     virtual size_t vocabSize() const = 0;
 
-    virtual std::vector<float> forwardNextToken(
-        const std::vector<TokenId>& contextTokens
+    // prefillBatch(...) -> logits for first generated token
+    virtual std::vector<std::vector<float>> prefillBatch(
+        const std::vector<std::vector<TokenId>>& batchPromptTokens
     ) = 0;
 
-    // For now this is very naive, simple loops
-    virtual std::vector<std::vector<float>> forwardNextTokenBatch(
-        const std::vector<std::vector<TokenId>>& batchContexts
-    ) {
-        std::vector<std::vector<float>> batchLogits;
-        batchLogits.reserve(batchContexts.size());
-
-        for (const auto& context : batchContexts) {
-            if (context.empty()) {
-                throw std::runtime_error("ModelBackend received empty context");
-            }
-
-            batchLogits.push_back(forwardNextToken(context));
-        }
-
-        return batchLogits;
-    }
+    // decodeBatch(...)  -> logits for next generated token
+    virtual std::vector<std::vector<float>> decodeBatch(
+        const std::vector<TokenId>& lastTokens,
+        const std::vector<int>& positions
+    ) = 0;
 };
 
 

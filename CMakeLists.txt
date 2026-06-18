@@ -11,19 +11,25 @@ target_include_directories(one_more_token INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-add_executable(run_single_request
-    examples/run_single_request.cpp
+# add_executable(run_single_request
+#     examples/run_single_request.cpp
+# )
+# target_link_libraries(run_single_request PRIVATE one_more_token)
+#
+#
+# add_executable(run_multi_request
+#     examples/run_multi_request.cpp
+# )
+# target_link_libraries(run_multi_request PRIVATE one_more_token)
+#
+#
+# add_executable(run_scheduled_engine
+#     examples/run_scheduled_engine.cpp
+# )
+# target_link_libraries(run_scheduled_engine PRIVATE one_more_token)
+
+
+add_executable(run_prefill_decode_engine
+    examples/run_prefill_decode_engine.cpp
 )
-target_link_libraries(run_single_request PRIVATE one_more_token)
-
-
-add_executable(run_multi_request
-    examples/run_multi_request.cpp
-)
-target_link_libraries(run_multi_request PRIVATE one_more_token)
-
-
-add_executable(run_scheduled_engine
-    examples/run_scheduled_engine.cpp
-)
-target_link_libraries(run_scheduled_engine PRIVATE one_more_token)
+target_link_libraries(run_prefill_decode_engine PRIVATE one_more_token)

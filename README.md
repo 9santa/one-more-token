@@ -39,3 +39,22 @@ for each row in batch:
 
 # Stage 4
 scheduler + v1 continuous/in-flight batching
+
+
+# Stage 5
+right now every steps ends the full context: prompt + generated_tokens to the model
+
+but we want serving like this:
+Prefill:
+  process the whole prompt once
+  produce logits for the first generated token
+  create/fill KV cache
+
+Decode:
+  process only the last generated token
+  reuse KV cache
+  produce logits for the next token
+
+
+
+

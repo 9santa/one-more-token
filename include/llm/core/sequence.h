@@ -4,6 +4,7 @@
 #include "llm/core/generation_config.h"
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -13,7 +14,8 @@ using RequstId = uint64_t;
 
 enum class SequenceStatus {
     Waiting,
-    Running,
+    Prefill,
+    Decode,
     Finished,
     Cancelled
 };
@@ -35,7 +37,7 @@ struct Sequence {
 
     GenerationConfig config;
 
-    SequenceStatus status = SequenceStatus::Running;
+    SequenceStatus status = SequenceStatus::Waiting;
     FinishReason finishReason = FinishReason::None;
 
     int generatedLength() const {
@@ -50,13 +52,29 @@ struct Sequence {
         return status == SequenceStatus::Waiting;
     }
 
-    bool isRunning() const {
-        return status == SequenceStatus::Running;
+    bool isPrefill() const {
+        return status == SequenceStatus::Prefill;
+    }
+
+    bool isDecode() const {
+        return status == SequenceStatus::Decode;
     }
 
     bool isFinished() const {
         return status == SequenceStatus::Finished ||
                status == SequenceStatus::Cancelled;
+    }
+
+    TokenId lastToken() const {
+        if (!generatedTokens.empty()) {
+            return generatedTokens.back();
+        }
+
+        if (!promptsTokens.empty()) {
+            return promptsTokens.back();
+        }
+
+        throw std::runtime_error("Sequence has no tokens");
     }
 
     // Right contextTokens() copies, which is bad. Will change this later.

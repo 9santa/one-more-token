@@ -6,7 +6,7 @@
 #include "llm/core/token.h"
 #include "llm/core/token_event.h"
 
-#include "llm/engine/decode_batch.h"
+#include "llm/engine/batch.h"
 #include "llm/engine/scheduler.h"
 
 #include "llm/model/model_backend.h"
@@ -61,27 +61,22 @@ private:
                 throw std::runtime_error("Scheduler admitted non-waiting sequence");
             }
 
-            seq.status = SequenceStatus::Running;
+            seq.status = SequenceStatus::Prefill;
         }
     }
 
-    DecodeBatch buildDecodeBatch() const {
-        DecodeBatch batch;
+    PrefillBatch buildPrefillBatch() const {
+        PrefillBatch batch;
 
         const std::vector<RequstId>& activeIds = scheduler_.activeIds();
-
-        batch.requestIds.reserve(activeIds.size());
-        batch.contexts.reserve(activeIds.size());
 
         for (RequstId id : activeIds) {
             const Sequence& seq = getSequenceOrThrow(id);
 
-            if (!seq.isRunning()) {
-                continue;
-            }
+            if (!seq.isPrefill()) continue;
 
             batch.requestIds.push_back(id);
-            batch.contexts.push_back(seq.contextTokens());
+            batch.promptTokens.push_back(seq.promptsTokens);
         }
 
         if (!batch.empty()) {
@@ -90,6 +85,149 @@ private:
 
         return batch;
     }
+
+    DecodeBatch buildDecodeBatch() const {
+        DecodeBatch batch;
+
+        const std::vector<RequstId>& activeIds = scheduler_.activeIds();
+
+        for (RequstId id : activeIds) {
+            const Sequence& seq = getSequenceOrThrow(id);
+
+            if (!seq.isDecode()) continue;
+
+            batch.requestIds.push_back(id);
+            batch.lastTokens.push_back(seq.lastToken());
+            batch.positions.push_back(seq.totalLength());
+        }
+
+        if (!batch.empty()) {
+            batch.validate();
+        }
+
+        return batch;
+    }
+
+    TokenEvent applyLogitsToSequence(RequstId id,
+                                     const std::vector<float>& logits,
+                                     std::vector<RequstId>& finishedThisStep) {
+        if (logits.size() != model_.vocabSize()) {
+            throw std::runtime_error("Model returned logits with wrong vocab size");
+        }
+
+        Sequence& seq = getSequenceOrThrow(id);
+
+        TokenId nextToken = sampler_.sample(logits, seq.config);
+
+        TokenEvent event;
+        event.requestId = id;
+        event.tokenId = nextToken;
+        event.hasToken = false;
+        event.finished = false;
+        event.finishReason = FinishReason::None;
+
+        if (nextToken == seq.config.eosTokenId) {
+            seq.status = SequenceStatus::Finished;
+            seq.finishReason = FinishReason::EosToken;
+
+            event.finished = true;
+            event.finishReason = FinishReason::EosToken;
+
+            finishedThisStep.push_back(id);
+            return event;
+        }
+
+        seq.generatedTokens.push_back(nextToken);
+
+        event.hasToken = true;
+        event.text = tokenizer_.decode(std::vector<TokenId>{nextToken});
+
+        if (seq.generatedLength() >= seq.config.maxNewTokens) {
+            seq.status = SequenceStatus::Finished;
+            seq.finishReason = FinishReason::MaxNewTokens;
+
+            event.finished = true;
+            event.finishReason = FinishReason::MaxNewTokens;
+
+            finishedThisStep.push_back(id);
+            return event;
+        }
+
+        // After prefill emits the first token, the sequence moves into decode
+        // Decode sequences remain decode sequences
+        seq.status = SequenceStatus::Decode;
+
+        return event;
+    }
+
+    std::vector<TokenEvent> runPrefillBatch(const PrefillBatch& batch) {
+        std::vector<TokenEvent> events;
+
+        std::vector<std::vector<float>> batchLogits =
+            model_.prefillBatch(batch.promptTokens);
+
+        if (batchLogits.size() != batch.size()) {
+            throw std::runtime_error("Model returned wrong prefill batch size");
+        }
+
+        std::vector<RequstId> finishedThisStep;
+
+        for (size_t row = 0; row < batch.size(); row++) {
+            RequstId id = batch.requestIds[row];
+
+            TokenEvent event =
+                applyLogitsToSequence(id, batchLogits[row], finishedThisStep);
+
+            events.push_back(event);
+        }
+
+        for (RequstId id : finishedThisStep) {
+            scheduler_.removeActive(id);
+        }
+
+        return events;
+    }
+
+    std::vector<TokenEvent> runDecodeBatch(const DecodeBatch& batch) {
+        std::vector<TokenEvent> events;
+
+        std::vector<std::vector<float>> batchLogits =
+            model_.decodeBatch(batch.lastTokens, batch.positions);
+
+        if (batchLogits.size() != batch.size()) {
+            throw std::runtime_error("Model returned wrong decode batch size");
+        }
+
+        std::vector<RequstId> finishedThisStep;
+
+        for (size_t row = 0; row < batch.size(); row++) {
+            RequstId id = batch.requestIds[row];
+
+            TokenEvent event =
+                applyLogitsToSequence(id, batchLogits[row], finishedThisStep);
+
+            events.push_back(event);
+        }
+
+        for (RequstId id : finishedThisStep) {
+            scheduler_.removeActive(id);
+        }
+
+        return events;
+    }
+
+    size_t countStatus(SequenceStatus status) const {
+        size_t count = 0;
+
+        for (RequstId id : scheduler_.activeIds()) {
+            const Sequence& seq = getSequenceOrThrow(id);
+
+            if (seq.status == status) count++;
+        }
+
+        return count;
+    }
+
 
 public:
     ScheduledEngine(ModelBackend& model,
@@ -146,87 +284,30 @@ public:
         return scheduler_.waitingCount();
     }
 
-    std::vector<TokenEvent> step() {
-        std::vector<TokenEvent> events;
+    size_t prefillCount() const {
+        return countStatus(SequenceStatus::Prefill);
+    }
 
-        // Important:
-        // Admit waiting requests before building the batch.
-        // This fills free capacity.
+    size_t decodeCount() const {
+        return countStatus(SequenceStatus::Decode);
+    }
+
+    std::vector<TokenEvent> step() {
         admitWaitingRequsts();
 
-        DecodeBatch batch = buildDecodeBatch();
+        PrefillBatch prefillBatch = buildPrefillBatch();
 
-        if (batch.empty()) {
-            return events;
+        if (!prefillBatch.empty()) {
+            return runPrefillBatch(prefillBatch);
         }
 
-        std::vector<std::vector<float>> batchLogits =
-            model_.forwardNextTokenBatch(batch.contexts);
+        DecodeBatch decodeBatch = buildDecodeBatch();
 
-        if (batchLogits.size() != batch.size()) {
-            throw std::runtime_error("Model returned wrong number of batch rows");
+        if (!decodeBatch.empty()) {
+            return runDecodeBatch(decodeBatch);
         }
 
-        std::vector<RequstId> finishedThisStep;
-
-        for (size_t row = 0; row < batch.size(); ++row) {
-            RequstId id = batch.requestIds[row];
-            Sequence& seq = getSequenceOrThrow(id);
-
-            if (!seq.isRunning()) {
-                continue;
-            }
-
-            const std::vector<float>& logits = batchLogits[row];
-
-            if (logits.size() != model_.vocabSize()) {
-                throw std::runtime_error("Model returned logits with wrong vocab size");
-            }
-
-            TokenId nextToken = sampler_.sample(logits, seq.config);
-
-            TokenEvent event;
-            event.requestId = id;
-            event.tokenId = nextToken;
-            event.hasToken = false;
-            event.finished = false;
-            event.finishReason = FinishReason::None;
-
-            if (nextToken == seq.config.eosTokenId) {
-                seq.status = SequenceStatus::Finished;
-                seq.finishReason = FinishReason::EosToken;
-
-                event.finished = true;
-                event.finishReason = FinishReason::EosToken;
-
-                finishedThisStep.push_back(id);
-                events.push_back(event);
-                continue;
-            }
-
-            seq.generatedTokens.push_back(nextToken);
-
-            event.hasToken = true;
-            event.text = tokenizer_.decode(std::vector<TokenId>{nextToken});
-
-            if (seq.generatedLength() >= seq.config.maxNewTokens) {
-                seq.status = SequenceStatus::Finished;
-                seq.finishReason = FinishReason::MaxNewTokens;
-
-                event.finished = true;
-                event.finishReason = FinishReason::MaxNewTokens;
-
-                finishedThisStep.push_back(id);
-            }
-
-            events.push_back(event);
-        }
-
-        for (RequstId id : finishedThisStep) {
-            scheduler_.removeActive(id);
-        }
-
-        return events;
+        return {};
     }
 
     GenerateResult result(RequstId id) const {
@@ -245,5 +326,6 @@ public:
         return getSequenceOrThrow(id);
     }
 };
+
 
 } // namespace llm
