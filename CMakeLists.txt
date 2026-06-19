@@ -24,7 +24,7 @@ target_include_directories(one_more_token INTERFACE
 
 add_library(one_more_token_cuda STATIC
     src/cuda/vector_add.cu
-    # src/model/cuda_mock_model.cu
+    src/model/cuda_mock_model.cu
 )
 
 target_include_directories(one_more_token_cuda PUBLIC
@@ -39,10 +39,6 @@ set_target_properties(one_more_token_cuda PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
 
-add_executable(run_cuda_vector_add
-    examples/run_cuda_vector_add.cpp
-)
-target_link_libraries(run_cuda_vector_add PRIVATE one_more_token_cuda)
 
 # add_executable(run_single_request
 #     examples/run_single_request.cpp
@@ -66,3 +62,15 @@ add_executable(run_prefill_decode_engine
     examples/run_prefill_decode_engine.cpp
 )
 target_link_libraries(run_prefill_decode_engine PRIVATE one_more_token)
+
+
+add_executable(run_cuda_vector_add
+    examples/run_cuda_vector_add.cpp
+)
+target_link_libraries(run_cuda_vector_add PRIVATE one_more_token_cuda)
+
+
+add_executable(run_cuda_mock_model
+    examples/run_cuda_mock_model.cpp
+)
+target_link_libraries(run_cuda_mock_model PRIVATE one_more_token_cuda)

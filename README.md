@@ -56,5 +56,13 @@ Decode:
   produce logits for the next token
 
 
-
+# Stage 6
+ScheduledEngine::step()
+    - build PrefillBatch or DecodeBatch
+    - CudaMockModel::prefillBatch/decodeBatch
+    - copy batch metadata to GPU
+    - launch mockLogitsKernel
+    - copy logits back to CPU
+    - sampler chooses tokens
+    - engine updates sequences
 
